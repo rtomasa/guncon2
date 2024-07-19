@@ -1,7 +1,14 @@
 # GunCon 2 USB Lightgun Driver
-Linux driver for the GunCon 2 light gun.
 
-The device reports absolute `ABS_X` and `ABS_Y` positions, the trigger button is reported as `BTN_LEFT`. The `ABS_X` and `ABS_Y` position reported by the device are raw values from the GunCon 2. 
+Linux driver for the GunCon 2 light gun. 
+
+The system will identify two different devices `Namco GunCon 2 (Joy)` and `Namco GunCon 2 (Aim)`.
+
+* The device reports absolute `ABS_X` and `ABS_Y` positions.
+* Trigger button is reported as `BTN_LEFT`.
+* Right button is reported as `BTN_A` and `BTN_C`.
+* Middle button is reported as `BTN_B`.
+* The `ABS_X` and `ABS_Y` position reported by the device are raw values from the GunCon 2. 
 
 ## Calibration
 
@@ -29,10 +36,9 @@ SUBSYSTEM=="input", ATTRS{idVendor}=="0b9a", ATTRS{idProduct}=="016a", ACTION=="
 
 ```shell
 make modules
-sudo make modules_install
+sudo make install
 sudo depmod -a
-sudo modprobe guncon2
+sudo modprobe gcon2
 ```
 
-To reload after compiling you will first need to unload it using `sudo modprobe -r guncon2`.
-
+To reload after compiling you will first need to unload it using `sudo modprobe -r gcon2`.

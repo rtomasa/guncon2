@@ -1,4 +1,3 @@
-
 ifeq ($(KERNELRELEASE),)
 
 KVERSION ?= $(shell uname -r)
@@ -9,17 +8,21 @@ PWD := $(shell pwd)
 modules:
 	$(MAKE) -C $(BUILD_DIR) M=$(PWD) modules
 
-modules_install:
+install:
 	$(MAKE) -C $(BUILD_DIR) M=$(PWD) modules_install
+
+uninstall:
+	rm -f /lib/modules/${KVERSION}/kernel/drivers/usb/taito_driver.ko
+	depmod -a
 
 clean:
 	rm -rf *~ *.o .*.cmd *.mod.c *.ko *.ko.unsigned .depend \
     	.tmp_versions modules.order Module.symvers Module.markers
 
-.PHONY: modules modules_install clean
+.PHONY: modules install uninstall clean
 
 else
 
-obj-m := guncon2.o
+obj-m := gcon2.o
 
 endif
