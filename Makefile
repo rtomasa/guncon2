@@ -12,7 +12,7 @@ install:
 	$(MAKE) -C $(BUILD_DIR) M=$(PWD) modules_install
 
 uninstall:
-	rm -f /lib/modules/${KVERSION}/kernel/drivers/usb/taito_driver.ko
+	rm -f /lib/modules/${KVERSION}/kernel/drivers/usb/gcon2.ko
 	depmod -a
 
 clean:

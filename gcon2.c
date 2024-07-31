@@ -116,8 +116,8 @@ static void guncon2_usb_irq(struct urb *urb)
         input_report_key(guncon2->input_device, BTN_SELECT, buttons & GUNCON2_BTN_SELECT);
         /* Mouse */
         input_report_key(guncon2->input_device, BTN_LEFT, buttons & GUNCON2_TRIGGER);
-        input_report_key(guncon2->input_device, BTN_RIGHT, buttons & GUNCON2_BTN_A || buttons & GUNCON2_BTN_C);
-        input_report_key(guncon2->input_device, BTN_MIDDLE, buttons & GUNCON2_BTN_B);
+        input_report_key(guncon2->input_device, BTN_RIGHT, buttons & GUNCON2_BTN_A);
+        input_report_key(guncon2->input_device, BTN_MIDDLE, buttons & GUNCON2_BTN_C);
 
         input_sync(guncon2->input_device);
     }
