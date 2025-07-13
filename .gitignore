@@ -58,3 +58,6 @@ CmakeLists.txt
 cmake-build-debug/
 include/
 .push.settings.jsonc
+.vscode/pro-deployer.json
+.vscode/settings.json
+NOTES.md
