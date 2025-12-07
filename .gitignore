@@ -48,7 +48,6 @@
 .tmp_versions/
 Module.symvers
 Mkfile.old
-dkms.conf
 
 # IDE
 .idea/*

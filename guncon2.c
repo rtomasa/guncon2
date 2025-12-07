@@ -37,6 +37,8 @@
 #define Y_MIN 20
 #define Y_MAX 240
 
+#define OFFSCREEN_HYST_FRAMES 8
+
 struct guncon2 {
     struct input_dev *input_device;
     struct usb_interface *intf;
@@ -44,6 +46,9 @@ struct guncon2 {
     struct mutex pm_mutex;
     bool is_open;
     char phys[64];
+    u16 last_x;
+    u16 last_y;
+    bool have_last_pos;
 };
 
 struct gc_mode {
@@ -58,9 +63,12 @@ static void guncon2_usb_irq(struct urb *urb) {
     struct guncon2 *guncon2 = urb->context;
     unsigned char *data = urb->transfer_buffer;
     int error, buttons;
-    unsigned short x, y;
+    unsigned short raw_x, raw_y;
     signed char hat_x = 0;
     signed char hat_y = 0;
+    bool invalid_coords = false;
+    bool offscreen = false;
+    static int offscreen_frames = 0;
 
     switch (urb->status) {
         case 0:
@@ -87,12 +95,59 @@ static void guncon2_usb_irq(struct urb *urb) {
     }
 
     if (urb->actual_length == 6) {
-        /* Aiming */
-        x = (data[3] << 8) | data[2];
-        y = data[4];
+        /* Aiming: 2 bytes buttons, 2 bytes X, 1 byte Y, 1 byte extra */
+        raw_x = (data[3] << 8) | data[2];
+        raw_y = data[4];
 
-        input_report_abs(guncon2->input_device, ABS_X, x);
-        input_report_abs(guncon2->input_device, ABS_Y, y);
+        /*
+         * Filter special "no light / unexpected light" codes from the GunCon
+         * protocol and anything outside the calibrated range.
+         *
+         *  - X=0x0001, Y=0x0005  -> unexpected light
+         *  - X=0x0001, Y=0x000A  -> no light / busy
+         *  - X=0x0000, Y=0x0000  -> some clones use this as "idle"
+         */
+        if (raw_x == 1 && (raw_y == 5 || raw_y == 10))
+            invalid_coords = true;
+        else if (raw_x == 0 && raw_y == 0)
+            invalid_coords = true;
+        else if (raw_x < X_MIN || raw_x > X_MAX ||
+                 raw_y < Y_MIN || raw_y > Y_MAX)
+            invalid_coords = true;
+
+        if (invalid_coords) {
+            offscreen_frames++;
+            /*dev_info(&guncon2->intf->dev,
+                     "guncon2: INVALID coords raw_x=%u raw_y=%u "
+                     "(X_MIN=%d X_MAX=%d Y_MIN=%d Y_MAX=%d)\n",
+                     raw_x, raw_y, X_MIN, X_MAX, Y_MIN, Y_MAX);*/
+        } else {
+            offscreen_frames = 0;
+            /*dev_info(&guncon2->intf->dev,
+                     "guncon2: VALID   coords raw_x=%u raw_y=%u\n",
+                     raw_x, raw_y);*/
+        }
+
+        if (offscreen_frames >= OFFSCREEN_HYST_FRAMES) {
+            offscreen = true;
+        } else {
+            offscreen = false;
+        }
+        /*dev_info(&guncon2->intf->dev,
+                     "guncon2: OFFSCREEN: %s\n",
+                     offscreen ? "true" : "false");*/
+
+        if (!invalid_coords) {
+            guncon2->last_x = raw_x;
+            guncon2->last_y = raw_y;
+            guncon2->have_last_pos = true;
+        }
+
+        /* Always report last good known position */
+        if (guncon2->have_last_pos) {
+            input_report_abs(guncon2->input_device, ABS_X, guncon2->last_x);
+            input_report_abs(guncon2->input_device, ABS_Y, guncon2->last_y);
+        }
 
         /* Buttons */
         buttons = ((data[0] << 8) | data[1]) ^ 0xffff;
@@ -122,6 +177,7 @@ static void guncon2_usb_irq(struct urb *urb) {
         input_report_key(guncon2->input_device, BTN_C, buttons & GUNCON2_BTN_C);
         input_report_key(guncon2->input_device, BTN_START, buttons & GUNCON2_BTN_START);
         input_report_key(guncon2->input_device, BTN_SELECT, buttons & GUNCON2_BTN_SELECT);
+        input_report_key(guncon2->input_device, BTN_EXTRA, offscreen);
 
         input_sync(guncon2->input_device);
     }
@@ -255,6 +311,8 @@ static int guncon2_probe(struct usb_interface *intf,
     input_set_capability(guncon2->input_device, EV_KEY, BTN_MIDDLE);
     input_set_capability(guncon2->input_device, EV_ABS, ABS_X);
     input_set_capability(guncon2->input_device, EV_ABS, ABS_Y);
+    // Offscreen virtual button
+    input_set_capability(guncon2->input_device, EV_KEY, BTN_EXTRA);
 
     input_set_abs_params(guncon2->input_device, ABS_X, X_MIN, X_MAX, 0, 0);
     input_set_abs_params(guncon2->input_device, ABS_Y, Y_MIN, Y_MAX, 0, 0);

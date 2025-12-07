@@ -2,7 +2,7 @@
 KVERSION    ?= $(shell uname -r)
 BUILD_DIR   ?= /lib/modules/$(KVERSION)/build
 PWD         := $(shell pwd)
-MODULE_NAME := gcon2
+MODULE_NAME := guncon2
 INSTALL_DIR := /lib/modules/$(KVERSION)/kernel/drivers/usb
 
 # Kernel module build logic (handles two-pass build system)

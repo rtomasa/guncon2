@@ -2,7 +2,7 @@
 
 set -e
 
-PKG="gcon2"
+PKG="guncon2"
 VER="1.0"
 SRCDIR="."    # use current directory
 USR_SRC="/usr/src/$PKG-$VER"
