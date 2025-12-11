@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for Namco GunCon 2 USB light gun
- * Copyright (C) 2019-2021 beardypig <beardypig@protonmail.com>
- *
+ * Original driver:
+ *   Copyright (C) 2019-2021 beardypig <beardypig@protonmail.com>
+ * New driver:
+ *   Copyright (C) 2025 rtomas <ruben.tomas.alonso@gmail.com>
  * Based largely on the PXRC driver by Marcus Folkesson <marcus.folkesson@gmail.com>
  *
  */
@@ -40,11 +42,13 @@
 #define OFFSCREEN_HYST_FRAMES 8
 
 struct guncon2 {
-    struct input_dev *input_device;
+    struct input_dev *js_input;
+    struct input_dev *mouse_input;
     struct usb_interface *intf;
     struct urb *urb;
     struct mutex pm_mutex;
     bool is_open;
+    int open_count;
     char phys[64];
     u16 last_x;
     u16 last_y;
@@ -59,9 +63,13 @@ struct gc_mode {
     unsigned char mode;
 };
 
-static void guncon2_usb_irq(struct urb *urb) {
+static void guncon2_usb_irq(struct urb *urb)
+{
     struct guncon2 *guncon2 = urb->context;
-    unsigned char *data = urb->transfer_buffer;
+    struct input_dev *js  = guncon2->js_input;
+    struct input_dev *mou = guncon2->mouse_input;
+    unsigned char *data   = urb->transfer_buffer;
+
     int error, buttons;
     unsigned short raw_x, raw_y;
     signed char hat_x = 0;
@@ -145,8 +153,14 @@ static void guncon2_usb_irq(struct urb *urb) {
 
         /* Always report last good known position */
         if (guncon2->have_last_pos) {
-            input_report_abs(guncon2->input_device, ABS_X, guncon2->last_x);
-            input_report_abs(guncon2->input_device, ABS_Y, guncon2->last_y);
+            if (js) {
+                input_report_abs(js, ABS_X, guncon2->last_x);
+                input_report_abs(js, ABS_Y, guncon2->last_y);
+            }
+            if (mou) {
+                input_report_abs(mou, ABS_X, guncon2->last_x);
+                input_report_abs(mou, ABS_Y, guncon2->last_y);
+            }
         }
 
         /* Buttons */
@@ -165,21 +179,46 @@ static void guncon2_usb_irq(struct urb *urb) {
         if (buttons & GUNCON2_DPAD_DOWN) {// down
             hat_y += 1;
         }
-        input_report_abs(guncon2->input_device, ABS_HAT0X, hat_x);
-        input_report_abs(guncon2->input_device, ABS_HAT0Y, hat_y);
 
-        // main buttons
-        input_report_key(guncon2->input_device, BTN_LEFT, buttons & GUNCON2_TRIGGER);
-        input_report_key(guncon2->input_device, BTN_RIGHT, buttons & GUNCON2_BTN_A || buttons & GUNCON2_BTN_C);
-        input_report_key(guncon2->input_device, BTN_MIDDLE, buttons & GUNCON2_BTN_B);
-        input_report_key(guncon2->input_device, BTN_A, buttons & GUNCON2_BTN_A);
-        input_report_key(guncon2->input_device, BTN_B, buttons & GUNCON2_BTN_B);
-        input_report_key(guncon2->input_device, BTN_C, buttons & GUNCON2_BTN_C);
-        input_report_key(guncon2->input_device, BTN_START, buttons & GUNCON2_BTN_START);
-        input_report_key(guncon2->input_device, BTN_SELECT, buttons & GUNCON2_BTN_SELECT);
-        input_report_key(guncon2->input_device, BTN_EXTRA, offscreen);
+        if (js) {
+            input_report_abs(js, ABS_HAT0X, hat_x);
+            input_report_abs(js, ABS_HAT0Y, hat_y);
+        }
 
-        input_sync(guncon2->input_device);
+        /*
+         * Joystick-style buttons
+         *  - trigger as BTN_TRIGGER
+         *  - A/B/C/START/SELECT as joystick/gamepad buttons
+         *  - offscreen as BTN_Z
+         */
+        if (js) {
+            input_report_key(js, BTN_TRIGGER, buttons & GUNCON2_TRIGGER);
+            input_report_key(js, BTN_A, buttons & GUNCON2_BTN_A);
+            input_report_key(js, BTN_B, buttons & GUNCON2_BTN_B);
+            input_report_key(js, BTN_C, buttons & GUNCON2_BTN_C);
+            input_report_key(js, BTN_START, buttons & GUNCON2_BTN_START);
+            input_report_key(js, BTN_SELECT, buttons & GUNCON2_BTN_SELECT);
+            input_report_key(js, BTN_Z, offscreen);
+        }
+
+        /*
+         * Mouse-style buttons – separate input device
+         *  - trigger as BTN_LEFT
+         *  - A/C as BTN_RIGHT
+         *  - B as BTN_MIDDLE
+         *  - offscreen as BTN_EXTRA
+         */
+        if (mou) {
+            input_report_key(mou, BTN_LEFT, buttons & GUNCON2_TRIGGER);
+            input_report_key(mou, BTN_RIGHT, (buttons & GUNCON2_BTN_A) || (buttons & GUNCON2_BTN_C));
+            input_report_key(mou, BTN_MIDDLE, buttons & GUNCON2_BTN_B);
+            input_report_key(mou, BTN_EXTRA, offscreen);
+        }
+
+        if (js)
+            input_sync(js);
+        if (mou)
+            input_sync(mou);
     }
 
 exit:
@@ -191,45 +230,61 @@ exit:
                 __func__, error);
 }
 
-static int guncon2_open(struct input_dev *input) {
+static int guncon2_open(struct input_dev *input)
+{
     unsigned char *gmode;
     struct guncon2 *guncon2 = input_get_drvdata(input);
     struct usb_device *usb_dev = interface_to_usbdev(guncon2->intf);
     int retval;
+
     mutex_lock(&guncon2->pm_mutex);
 
-    gmode = kzalloc(6, GFP_KERNEL);
-    if (!gmode)
-        return -ENOMEM;
+    if (guncon2->open_count == 0) {
+        gmode = kzalloc(6, GFP_KERNEL);
+        if (!gmode) {
+            retval = -ENOMEM;
+            goto out_unlock;
+        }
 
-    /* set the mode to normal 50Hz mode */
-    gmode[5] = 1;
-    usb_control_msg(usb_dev, usb_sndctrlpipe(usb_dev, 0),
-                    0x09, 0x21, 0x200, 0, gmode, 6, 100000);
+        /* set the mode to normal 50Hz mode */
+        gmode[5] = 1;
+        usb_control_msg(usb_dev, usb_sndctrlpipe(usb_dev, 0),
+                        0x09, 0x21, 0x200, 0, gmode, 6, 100000);
 
-    kfree(gmode);
+        kfree(gmode);
 
-    retval = usb_submit_urb(guncon2->urb, GFP_KERNEL);
-    if (retval) {
-        dev_err(&guncon2->intf->dev,
-                "%s - usb_submit_urb failed, error: %d\n",
-                __func__, retval);
-        retval = -EIO;
-        goto out;
+        retval = usb_submit_urb(guncon2->urb, GFP_KERNEL);
+        if (retval) {
+            dev_err(&guncon2->intf->dev,
+                    "%s - usb_submit_urb failed, error: %d\n",
+                    __func__, retval);
+            retval = -EIO;
+            goto out_unlock;
+        }
+
+        guncon2->is_open = true;
     }
 
-    guncon2->is_open = true;
+    guncon2->open_count++;
 
-out:
+out_unlock:
     mutex_unlock(&guncon2->pm_mutex);
     return retval;
 }
 
-static void guncon2_close(struct input_dev *input) {
+static void guncon2_close(struct input_dev *input)
+{
     struct guncon2 *guncon2 = input_get_drvdata(input);
+
     mutex_lock(&guncon2->pm_mutex);
-    usb_kill_urb(guncon2->urb);
-    guncon2->is_open = false;
+    if (guncon2->open_count > 0) {
+        guncon2->open_count--;
+        if (guncon2->open_count == 0) {
+            usb_kill_urb(guncon2->urb);
+            guncon2->is_open = false;
+        }
+    }
+
     mutex_unlock(&guncon2->pm_mutex);
 }
 
@@ -291,47 +346,84 @@ static int guncon2_probe(struct usb_interface *intf,
     usb_make_path(udev, guncon2->phys, sizeof(guncon2->phys));
     strlcat(guncon2->phys, "/input0", sizeof(guncon2->phys));
 
-    /* Button related */
-    guncon2->input_device = devm_input_allocate_device(&intf->dev);
-    if (!guncon2->input_device) {
+    /*
+     * Mouse-style device
+     */
+    guncon2->mouse_input = devm_input_allocate_device(&intf->dev);
+    if (!guncon2->mouse_input) {
+        dev_err(&intf->dev, "couldn't allocate mouse input device\n");
         dev_err(&intf->dev, "couldn't allocate input_device input device\n");
         return -ENOMEM;
     }
 
-    guncon2->input_device->name = "Namco GunCon 2";
-    guncon2->input_device->phys = guncon2->phys;
+    guncon2->mouse_input->name = "Namco GunCon 2 Mouse";
+    guncon2->mouse_input->phys = guncon2->phys;
 
-    guncon2->input_device->open = guncon2_open;
-    guncon2->input_device->close = guncon2_close;
+    guncon2->mouse_input->open = guncon2_open;
+    guncon2->mouse_input->close = guncon2_close;
 
-    usb_to_input_id(udev, &guncon2->input_device->id);
+    usb_to_input_id(udev, &guncon2->mouse_input->id);
 
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_LEFT);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_RIGHT);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_MIDDLE);
-    input_set_capability(guncon2->input_device, EV_ABS, ABS_X);
-    input_set_capability(guncon2->input_device, EV_ABS, ABS_Y);
-    // Offscreen virtual button
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_EXTRA);
+    /* Mouse buttons */
+    input_set_capability(guncon2->mouse_input, EV_KEY, BTN_LEFT);
+    input_set_capability(guncon2->mouse_input, EV_KEY, BTN_RIGHT);
+    input_set_capability(guncon2->mouse_input, EV_KEY, BTN_MIDDLE);
+    input_set_capability(guncon2->mouse_input, EV_KEY, BTN_EXTRA); /* offscreen */
 
-    input_set_abs_params(guncon2->input_device, ABS_X, X_MIN, X_MAX, 0, 0);
-    input_set_abs_params(guncon2->input_device, ABS_Y, Y_MIN, Y_MAX, 0, 0);
+    /* Absolute pointer for mouse */
+    input_set_capability(guncon2->mouse_input, EV_ABS, ABS_X);
+    input_set_capability(guncon2->mouse_input, EV_ABS, ABS_Y);
+    input_set_abs_params(guncon2->mouse_input, ABS_X, X_MIN, X_MAX, 0, 0);
+    input_set_abs_params(guncon2->mouse_input, ABS_Y, Y_MIN, Y_MAX, 0, 0);
 
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_A);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_B);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_C);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_START);
-    input_set_capability(guncon2->input_device, EV_KEY, BTN_SELECT);
+    input_set_drvdata(guncon2->mouse_input, guncon2);
 
-    // D-Pad
-    input_set_capability(guncon2->input_device, EV_ABS, ABS_HAT0X);
-    input_set_capability(guncon2->input_device, EV_ABS, ABS_HAT0Y);
-    input_set_abs_params(guncon2->input_device, ABS_HAT0X, -1, 1, 0, 0);
-    input_set_abs_params(guncon2->input_device, ABS_HAT0Y, -1, 1, 0, 0);
+    error = input_register_device(guncon2->mouse_input);
+    if (error)
+        return error;
 
-    input_set_drvdata(guncon2->input_device, guncon2);
+    /*
+     * Joystick-style device
+     */
+    guncon2->js_input = devm_input_allocate_device(&intf->dev);
+    if (!guncon2->js_input) {
+        dev_err(&intf->dev, "couldn't allocate joystick input device\n");
+        return -ENOMEM;
+    }
 
-    error = input_register_device(guncon2->input_device);
+    guncon2->js_input->name = "Namco GunCon 2 Joystick";
+    guncon2->js_input->phys = guncon2->phys;
+
+    guncon2->js_input->open = guncon2_open;
+    guncon2->js_input->close = guncon2_close;
+
+    usb_to_input_id(udev, &guncon2->js_input->id);
+
+    /* Aiming axes */
+    input_set_capability(guncon2->js_input, EV_ABS, ABS_X);
+    input_set_capability(guncon2->js_input, EV_ABS, ABS_Y);
+    input_set_abs_params(guncon2->js_input, ABS_X, X_MIN, X_MAX, 0, 0);
+    input_set_abs_params(guncon2->js_input, ABS_Y, Y_MIN, Y_MAX, 0, 0);
+
+    /* D-Pad as hat */
+    input_set_capability(guncon2->js_input, EV_ABS, ABS_HAT0X);
+    input_set_capability(guncon2->js_input, EV_ABS, ABS_HAT0Y);
+    input_set_abs_params(guncon2->js_input, ABS_HAT0X, -1, 1, 0, 0);
+    input_set_abs_params(guncon2->js_input, ABS_HAT0Y, -1, 1, 0, 0);
+
+    /* Joystick/gamepad buttons */
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_TRIGGER);
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_A);
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_B);
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_C);
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_START);
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_SELECT);
+    /* Offscreen as joystick button */
+    input_set_capability(guncon2->js_input, EV_KEY, BTN_Z);
+
+    input_set_drvdata(guncon2->js_input, guncon2);
+
+    error = input_register_device(guncon2->js_input);
     if (error)
         return error;
 
@@ -412,6 +504,6 @@ static struct usb_driver guncon2_driver = {
 
 module_usb_driver(guncon2_driver);
 
-MODULE_AUTHOR("beardypig <beardypig@protonmail.com>");
+MODULE_AUTHOR("rtomas <ruben.tomas.alonso@gmail.com>");
 MODULE_DESCRIPTION("Namco GunCon 2");
 MODULE_LICENSE("GPL v2");
