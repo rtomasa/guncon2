@@ -26,23 +26,23 @@ evdev-joystick --e /dev/input/by-id/usb-0b9a_016a-event-joystick -m 175 -M 720 -
 
 # Y axis (joystick device)
 evdev-joystick --e /dev/input/by-id/usb-0b9a_016a-event-joystick -m 20 -M 240 -a 1
-
+```
 It is also included a simple script for calibrating the GunCon 2, however the calibration must be performed each time the GunCon 2 is connected. This can be done with a set of udev rules. 
 
 For example;
-```
+```ini
 SUBSYSTEM=="input", ATTRS{idVendor}=="0b9a", ATTRS{idProduct}=="016a", ACTION=="add", RUN+="/bin/bash -c 'evdev-joystick --e %E{DEVNAME} -m 175 -M 720 -a 0; evdev-joystick --e %E{DEVNAME} -m 20 -M 240 -a 1'"
 ```
 
 ### Automatic DKMS driver install and removal
-```shell
+```sh
 ./dkms_gcon2.sh all
 ./dkms_gcon2.sh remove
 ```
 
 ### Build and install
 
-```shell
+```sh
 make modules
 sudo make modules_install
 sudo depmod -a
