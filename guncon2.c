@@ -34,10 +34,11 @@
 #define GUNCON2_BTN_SELECT BIT(6)
 
 // default calibration, can be updated with evdev-joystick
-#define X_MIN 175
-#define X_MAX 720
-#define Y_MIN 20
-#define Y_MAX 240
+// Added +/-15 units to the physical limits to improve edge detection
+#define X_MIN 160 //175
+#define X_MAX 735 //720
+#define Y_MIN 5 //20
+#define Y_MAX 255 //240
 
 #define OFFSCREEN_HYST_FRAMES 8
 
