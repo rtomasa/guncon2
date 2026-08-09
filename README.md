@@ -34,13 +34,52 @@ For example;
 SUBSYSTEM=="input", ATTRS{idVendor}=="0b9a", ATTRS{idProduct}=="016a", ACTION=="add", RUN+="/bin/bash -c 'evdev-joystick --e %E{DEVNAME} -m 175 -M 720 -a 0; evdev-joystick --e %E{DEVNAME} -m 20 -M 240 -a 1'"
 ```
 
-### Build and install
+## Build and installation
+
+The build requires a C compiler, GNU Make, and headers matching the target
+kernel.
+
+Build and install the module for the running kernel:
 
 ```sh
-make modules
-sudo make modules_install
-sudo depmod -a
+make -j"$(nproc)"
+sudo make install
 sudo modprobe guncon2
 ```
 
-To reload after compiling you will first need to unload it using `sudo modprobe -r guncon2`.
+The module is installed under `/lib/modules/$(uname -r)/extra/` by default.
+The `modules_install` target remains available as an alias for `install`.
+
+### Manual loading
+
+Build the module without installing it, then load it temporarily:
+
+```sh
+make modules
+sudo insmod ./guncon2.ko
+```
+
+### Build options
+
+Run `make help` for the complete target and override list. For example:
+
+```sh
+make KERNEL_RELEASE=6.12.0-rpi-2712 modules
+make KDIR=/path/to/kernel/build modules
+make DESTDIR=/tmp/guncon2-package install
+```
+
+`KERNEL_RELEASE` defaults to the running kernel, and `KDIR` defaults to its
+build directory under `/lib/modules/`.
+
+### Uninstallation
+
+Unload the driver before uninstalling it if it is currently in use:
+
+```sh
+sudo modprobe -r guncon2
+sudo make uninstall
+```
+
+To reload the driver after rebuilding it, unload it with
+`sudo modprobe -r guncon2` before loading it again.
