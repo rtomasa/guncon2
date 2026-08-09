@@ -34,12 +34,6 @@ For example;
 SUBSYSTEM=="input", ATTRS{idVendor}=="0b9a", ATTRS{idProduct}=="016a", ACTION=="add", RUN+="/bin/bash -c 'evdev-joystick --e %E{DEVNAME} -m 175 -M 720 -a 0; evdev-joystick --e %E{DEVNAME} -m 20 -M 240 -a 1'"
 ```
 
-### Automatic DKMS driver install and removal
-```sh
-./dkms_gcon2.sh all
-./dkms_gcon2.sh remove
-```
-
 ### Build and install
 
 ```sh
@@ -50,4 +44,3 @@ sudo modprobe guncon2
 ```
 
 To reload after compiling you will first need to unload it using `sudo modprobe -r guncon2`.
-
