@@ -103,8 +103,10 @@ static void guncon2_usb_irq(struct urb *urb)
             goto exit;
     }
 
-    if (urb->actual_length == 6) {
-        /* Aiming: 2 bytes buttons, 2 bytes X, 1 byte Y, 1 byte extra */
+    if (urb->actual_length >= 6) {
+        /* Aiming: 2 bytes buttons, 2 bytes X, 1 byte Y, 1 byte extra.
+           Thrustmaster Beretta 92FS sends 7 bytes (1 extra byte)
+        */
         raw_x = (data[3] << 8) | data[2];
         raw_y = data[4];
 
